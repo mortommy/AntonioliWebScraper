@@ -2,13 +2,15 @@ package com.akabana.AntonioliWebScraper;
 
 import com.gargoylesoftware.htmlunit.BrowserVersion;
 import com.gargoylesoftware.htmlunit.History;
-//import com.gargoylesoftware.htmlunit.ProxyConfig;
+import com.gargoylesoftware.htmlunit.ProxyConfig;
 import com.gargoylesoftware.htmlunit.SilentCssErrorHandler;
+import com.gargoylesoftware.htmlunit.TextPage;
 import com.gargoylesoftware.htmlunit.WebClient;
 import com.gargoylesoftware.htmlunit.html.DomElement;
 import com.gargoylesoftware.htmlunit.html.DomNodeList;
 import com.gargoylesoftware.htmlunit.html.HtmlElement;
 import com.gargoylesoftware.htmlunit.html.HtmlPage;
+import com.gargoylesoftware.htmlunit.DefaultCredentialsProvider;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -20,15 +22,20 @@ import java.util.logging.Logger;
 
 public class AntonioliWebSiteScraper {
 	
-	private String webSiteLink;
-	private List<String> itemsLinks;
-	private List<AntonioliItem> antonioliItems;
+	private String webSiteLink = ""; //main website url
+	private String proxyHost = "";
+	private String proxyPort= "";
+	private String proxyUser = "";
+	private String proxyPassword = "";
+	private List<String> itemsLinks;  //list of product webpages that generated antonioli items list
+	private List<String> itemsSkippedLinks; //listo f product webpages skipped due to a some error during webscraping
+	private List<AntonioliItem> antonioliItems; //list of items retrivied (one for each size found)
 	private Logger logger;
-	//private final WebClient webClient = new WebClient(BrowserVersion.INTERNET_EXPLORER);
 	
     public AntonioliWebSiteScraper(String webSiteLink) throws Exception {
     	this.webSiteLink = webSiteLink;
     	this.itemsLinks = new ArrayList<String>();
+    	this.itemsSkippedLinks = new ArrayList<String>();
     	this.antonioliItems = new ArrayList<AntonioliItem>();
     }
     
@@ -37,10 +44,152 @@ public class AntonioliWebSiteScraper {
     	this.logger = logger;    	
     }
     
+    /***
+     * 
+     * @param webSiteLink
+     * @param proxyHost
+     * @param proxyPort
+     * @param proxyUser empty string if no credentials are required
+     * @param proxyPassword empty string if no credentials are required
+     * @throws Exception
+     */
+    public AntonioliWebSiteScraper(String webSiteLink, String proxyHost, String proxyPort, String proxyUser, String proxyPassword) throws Exception {
+    	this(webSiteLink);
+    	this.proxyHost = proxyHost;
+    	this.proxyPort = proxyPort;
+    	this.proxyUser = proxyUser;
+    	this.proxyPassword = proxyPassword;
+    }
+    
+    /***
+     * 
+     * @param webSiteLink
+     * @param proxyHost
+     * @param proxyPort
+     * @param proxyUser empty string if no credentials are required
+     * @param proxyPassword empty string if no credentials are required
+     * @param logger
+     * @throws Exception
+     */
+    public AntonioliWebSiteScraper(String webSiteLink, String proxyHost, String proxyPort, String proxyUser, String proxyPassword, Logger logger) throws Exception {
+    	this(webSiteLink, proxyHost, proxyPort, proxyUser, proxyPassword);
+    	this.logger = logger;
+    }
+    
+    /***
+     * Uses the category url provided, concatenated to the web site main url, and get all the products web pages urls available.
+     * The variant is a smart one, use the list of Antonioli Items provided as parameter to skip the scrap of items where
+     * update is not requested; in that case the item is retrivied from the list provided. 
+     * The webpage link is added to the itemsLinks list;
+     * all the items retrieved are returned in a list of AntonioliItem objects.
+     * @param URL
+     * @param iteratePages
+     * @param avoidScrapeItems
+     * @return
+     * @throws Exception
+     */
+    public List<AntonioliItem> scrapeCategoryWebPageSmart(String URL, boolean iteratePages, List<AntonioliItem> avoidScrapeItems) throws Exception
+    {
+    	if(logger!=null)
+			logger.log(Level.FINE, "Start scrapeCategoryWebPageSmart method");
+    	try 
+    	{
+    		//get all the product pages links available in the page category provided
+    		List<String> returnedLinks = getItemsLinks(URL, iteratePages);
+    		
+    		if(logger!=null)
+    			logger.log(Level.INFO, "Got from the category pages "+URL+" "+returnedLinks.size()+" links");
+    		boolean itemNoteBeScraped = false;
+    		if(returnedLinks.size() > 0)
+	    	{
+    			for(int i=0;i<returnedLinks.size();i++)
+	    		{
+    				itemNoteBeScraped = false;
+	    			//look if the item is to be not scraped no update needed
+	    			for(AntonioliItem item : avoidScrapeItems)
+	    			{
+	    				if(item.getItemLink().equals(returnedLinks.get(i)))
+	    				{
+	    					if(logger!=null)
+	    		    			logger.log(Level.FINE, "Item link "+returnedLinks.get(i)+" no needed to be scraped.");
+	    					if(!antonioliItems.contains(item))
+	    					{
+	    						if(logger!=null)
+	    		        			logger.log(Level.INFO, "Add item "+item.getItemID()+" to the list, got object from the list avoided.");
+	    						antonioliItems.add(item);
+	    					}
+	    					else
+	    					{
+	    						if(logger!=null)
+	    		        			logger.log(Level.INFO, "Item "+item.getItemID()+" already present in the list");
+	    					}	    			
+	    					itemNoteBeScraped = true;
+	    				}//if to be not scraped
+	    			}//for
+	    			
+	    			if(!itemNoteBeScraped)
+    				{
+	    				List<AntonioliItem> returnedItems;
+	    				
+	    				if(logger!=null)
+		        			logger.log(Level.INFO, "Item needed to be scraped.");
+	    				
+    					//get the list of items available in the product page (an item per size)
+    	    			returnedItems = getItemsFromLink(returnedLinks.get(i));
+    	    			
+    	    			if(logger!=null)
+    	        			logger.log(Level.INFO, "Got from the item page "+returnedLinks.get(i)+" "+returnedItems.size()+" items");
+    	    			//iterate on returned list of items and add them to the final result list
+    	    			if(returnedItems.size() > 0)
+    	    			{
+    	    				//each AntonioliItem is added to the List antonioliItems (if not already exists)
+    	    				for(int j=0;j<returnedItems.size();j++)
+    	    				{
+    	    					if(!antonioliItems.contains(returnedItems.get(j)))
+    	    					{
+    	    						if(logger!=null)
+    	    		        			logger.log(Level.INFO, "Add item "+returnedItems.get(j).getItemID()+" to the list");
+    	    						antonioliItems.add(returnedItems.get(j));
+    	    					}
+    	    					else
+    	    					{
+    	    						if(logger!=null)
+    	    		        			logger.log(Level.INFO, "Item "+returnedItems.get(j).getItemID()+" already present in the list");
+    	    					}	
+    	    				}//for	    				
+    	    			}//if
+    	    		}//else needed to be scraped
+	    				
+    				//complete the list of product page links
+    				if(!itemsLinks.contains(returnedLinks.get(i)))
+	    			{
+	    				if(logger!=null)
+		        			logger.log(Level.INFO, "Add link "+returnedLinks.get(i)+" to the list");
+	    				itemsLinks.add(returnedLinks.get(i));
+	    			}//if
+	    			else
+	    			{
+						if(logger!=null)
+		        			logger.log(Level.INFO, "Item "+returnedLinks.get(i)+" already present in the list");
+					}//else		    					    			
+	    		}//for on returnedLinks from category page
+	    	}//if
+    		
+    		if(logger!=null)
+    			logger.log(Level.FINE, "End scrapeCategoryWebPageSmart method");
+    		
+    		return antonioliItems;
+    	}
+    	catch (Exception e) 
+		{
+            throw new Exception(e.getMessage());
+        } 
+    }
+    
     /**
-     * Uses the category url provided, concatenated to the web site main url, get all the items page links
-     * and, if it doesn't exist in the List itemsLinks, adds the link to the list; for each link the AntonioliItem objects
-     * retrieved (one per available size) is added (if it is not stored already) to the antonioliItems List.
+     * Uses the category url provided, concatenated to the web site main url, and get all the products web pages urls available.
+     * If from each product page, items are retrieved (one per size), the webpage link is added to the itemsLinks list;
+     * all the items retrieved are returned in a list of AntonioliItem objects.
      * @param URL category page sub url, with no main website address
      * @param iteratePages if true pages 1, 2 ,3, ... are scanned until no items found
      * @return the updated List antonioliItems
@@ -52,14 +201,7 @@ public class AntonioliWebSiteScraper {
 			logger.log(Level.FINE, "Start scrapeCategoryWebPage method");
     	try 
     	{
-    		/*
-    		if(logger!=null)
-    			logger.log(Level.INFO, "Start the ligh Web Browser");
-    		//open the web page
-			StartWebBrowser();
-			*/
-    		
-    		//get all the links available in the page category provided
+    		//get all the product pages links available in the page category provided
     		List<String> returnedLinks = getItemsLinks(URL, iteratePages);
     		
     		if(logger!=null)
@@ -68,15 +210,18 @@ public class AntonioliWebSiteScraper {
     		if(returnedLinks.size() > 0)
 	    	{
     			List<AntonioliItem> returnedItems;
-    			//for each link get the list of AntonioliItem (one per available size)
+    			//for each link get the list of AntonioliItem items (one per available size)
 	    		for(int i=0;i<returnedLinks.size();i++)
 	    		{
+	    			//get the list of items available in the product page (an item per size)
 	    			returnedItems = getItemsFromLink(returnedLinks.get(i));
+	    			
 	    			if(logger!=null)
 	        			logger.log(Level.INFO, "Got from the item page "+returnedLinks.get(i)+" "+returnedItems.size()+" items");
+	    			//iterate on returned list of items and add them to the final result list
 	    			if(returnedItems.size() > 0)
 	    			{
-	    				//each AntonioliItem is added to the List antonioliItems
+	    				//each AntonioliItem is added to the List antonioliItems (if not already exists)
 	    				for(int j=0;j<returnedItems.size();j++)
 	    				{
 	    					if(!antonioliItems.contains(returnedItems.get(j)))
@@ -88,10 +233,11 @@ public class AntonioliWebSiteScraper {
 	    					else
 	    					{
 	    						if(logger!=null)
-	    		        			logger.log(Level.INFO, "Item "+returnedItems.get(j).getItemID()+" alredy present in the list");
+	    		        			logger.log(Level.INFO, "Item "+returnedItems.get(j).getItemID()+" already present in the list");
 	    					}	
 	    				}//for
 	    				
+	    				//complete the list of product page links
 	    				if(!itemsLinks.contains(returnedLinks.get(i)))
 		    			{
 		    				if(logger!=null)
@@ -101,7 +247,7 @@ public class AntonioliWebSiteScraper {
 		    			else
 		    			{
 							if(logger!=null)
-			        			logger.log(Level.INFO, "Item "+returnedLinks.get(i)+" alredy present in the list");
+			        			logger.log(Level.INFO, "Item "+returnedLinks.get(i)+" already present in the list");
 						}//else		    				
 	    			}//if	    			
 	    		}//for	    		
@@ -133,7 +279,7 @@ public class AntonioliWebSiteScraper {
     	boolean itemsAvailable = true;
     	String newUrl = webSiteLink + URL + "&page=1";
     	int iterateStep = 1;
-    	WebClient webClient = null;
+    	WebClient webClient = StartWebBrowser();
     	HtmlPage page = null;
     	List<String> returnList = new ArrayList<String>();
     	
@@ -143,22 +289,35 @@ public class AntonioliWebSiteScraper {
     		{
     			//while the page have items iterate
 				
-    			//open the web client
-				webClient = StartWebBrowser();
-				
-				if(logger!=null)
+    			if(logger!=null)
 					logger.log(Level.FINE, "Open the web page: "+newUrl);
-				
-				try
+				boolean makeTentative = true;
+				int numTentative = 1;
+				while(makeTentative)
 				{
-					page = webClient.getPage(newUrl);
-					webClient.waitForBackgroundJavaScript(6000);
-				}
-				catch (Exception e)
-				{
-					//if an error occurred skip the item
-					return returnList;
-				}
+					try
+					{
+						page = webClient.getPage(newUrl);
+						webClient.waitForBackgroundJavaScript(10000);
+						makeTentative = false;
+					}
+					catch (Exception e)
+					{
+						logger.log(Level.WARNING, "The category page "+newUrl+" generated an error, retry.");
+						logger.log(Level.FINE, "Close web browser");
+						webClient.getCurrentWindow().getJobManager().removeAllJobs();
+				        webClient.close();
+				        webClient = StartWebBrowser();
+					}
+					numTentative++;
+					if(numTentative==4)
+					{
+						makeTentative = false;
+						logger.log(Level.SEVERE, "Cannot get the category page "+newUrl+" after 3 tenatives, the download is compromised. Better to stop.");
+						throw new Exception("Cannot get the category page "+newUrl+" after 3 tenatives.");
+					}
+					Thread.sleep(5000);
+				}				
 										    				    		
 	    		//get all the article html elements
 	    		if(logger!=null)
@@ -267,19 +426,9 @@ public class AntonioliWebSiteScraper {
 			if(logger!=null)
 				logger.log(Level.FINE, "Open the web page: "+itemLink);
 			
-			try
-			{
-				page = webClient.getPage(itemLink);
-				webClient.waitForBackgroundJavaScript(6000);
-			}
-			catch (Exception ex)
-			{
-				if(logger!=null)
-					logger.log(Level.WARNING, "An error occurred with the page: "+itemLink+" ; skip item. Error: "+ex.getMessage());
-				//if an error occurred skip the item
-				return returnItems;
-			}
-			
+			page = webClient.getPage(itemLink);
+			webClient.waitForBackgroundJavaScript(10000);
+						
     		//get the article html section
     		if(logger!=null)
 				logger.log(Level.FINE, "Look for article html elements");
@@ -302,6 +451,24 @@ public class AntonioliWebSiteScraper {
     				
     				if(productDetails != null)
     				{
+    					if(logger!=null)
+	        				logger.log(Level.FINE, "Look for html element h2");
+	    				DomNodeList<HtmlElement> h2 = productDetails.getElementsByTagName("h2");
+	    				//h2 an h3 have not always an a element to get the gender
+	    				if(h2.size() > 0)
+	    				{
+	    					if(logger!=null)
+	            				logger.log(Level.FINE, "Look for html element a inside h2");
+	    					DomNodeList<HtmlElement> a = (h2.get(0)).getElementsByTagName("a");
+	    					if(a.size() > 0)
+	    					{
+	    						categories = (a.get(0)).getAttribute("href").split("/");
+	    						gender = categories[3].equals("men") ? "M": "W";
+	    						//category = categories[6];
+	    						//hierarchy1 = categories[6];
+	    					}
+	    				}
+	    				
 	    				if(logger!=null)
 	        				logger.log(Level.FINE, "Look for html element h3");
 	    				DomNodeList<HtmlElement> h3 = productDetails.getElementsByTagName("h3");
@@ -492,23 +659,6 @@ public class AntonioliWebSiteScraper {
 									}
 								}//if
 							}//if
-							/*
-							else if(owlItem.getAttribute("class").equals("owl-item"))
-							{
-								if(logger!=null)
-		            				logger.log(Level.FINE, "Look for html element img");
-								DomNodeList<HtmlElement> imgs = owlItem.getElementsByTagName("img");
-								if(imgs.size()>0)
-								{
-									if(pictureAlt1.equals(""))
-										pictureAlt1 = imgs.get(0).getAttribute("src");
-									else if (pictureAlt2.equals(""))
-										pictureAlt2 = imgs.get(0).getAttribute("src");
-									else if (pictureAlt3.equals(""))
-										pictureAlt3 = imgs.get(0).getAttribute("src");
-								}//if
-							}//else if
-							*/
 	    				}//for
     				}//if div class owl-item exists   				
     			}//if div[@class='owl-stage'] html element exists    			
@@ -551,21 +701,8 @@ public class AntonioliWebSiteScraper {
     			if(logger!=null)
     				logger.log(Level.FINE, "Create object for item: "+sku+", size: "+sizes.get(i));
     			
-    			//clean images link
-    			/*
-    			if(picture.indexOf("?")!=-1)
-    				picture = picture.substring(0, picture.indexOf("?"));
-    			if(pictureAlt1.indexOf("?")!=-1)
-    				pictureAlt1 = pictureAlt1.substring(0, pictureAlt1.indexOf("?"));
-    			if(pictureAlt2.indexOf("?")!=-1)
-    				pictureAlt2 = pictureAlt2.substring(0, pictureAlt2.indexOf("?"));	
-    			if(pictureAlt3.indexOf("?")!=-1)
-    				pictureAlt3 = pictureAlt3.substring(0, pictureAlt3.indexOf("?"));
-    			if(pictureAlt4.indexOf("?")!=-1)
-    				pictureAlt4 = pictureAlt4.substring(0, pictureAlt4.indexOf("?"));
-    			*/
     			antonioliItem = new AntonioliItem();
-    			antonioliItem.setItemID("ANTONIOLI-"+gender+"-"+season+"-"+style+color);
+    			antonioliItem.setItemID("ANTONIOLI-"+gender+"-"+season+"-"+sku.replace("\\", ""));
     			antonioliItem.setItemSku(sku);
     			antonioliItem.setItemBrand(brand);
     			antonioliItem.setItemStyle(style);
@@ -597,7 +734,11 @@ public class AntonioliWebSiteScraper {
     	}//try
     	catch (Exception e) 
 		{
-            throw new Exception(e.getMessage());
+    		if(logger!=null)
+				logger.log(Level.WARNING, "An error occurred with the page: "+itemLink+"; skip items. Error: "+e.getMessage());
+			//if an error occurred skip the product page, add it to the skipped pages and go on
+			this.itemsSkippedLinks.add(itemLink);
+			return returnItems;
         }  
     	finally 
     	{
@@ -618,6 +759,7 @@ public class AntonioliWebSiteScraper {
 			if(logger!=null)
 				logger.log(Level.FINE, "Start the light Web Browser");
 			final WebClient webClient = new WebClient(BrowserVersion.INTERNET_EXPLORER);
+			
 			webClient.getCookieManager().setCookiesEnabled(true);
 	        webClient.getOptions().setJavaScriptEnabled(true);
 	        webClient.getOptions().setTimeout(60000);
@@ -629,12 +771,36 @@ public class AntonioliWebSiteScraper {
 	        webClient.getOptions().setPopupBlockerEnabled(true);
 	        webClient.getOptions().setThrowExceptionOnFailingStatusCode(false);
 	        webClient.getCache().setMaxSize(0);
+	        //webClient.getOptions().setRedirectEnabled(false);
+	        
+	        //web proxy?
+	        if(!this.proxyHost.equals(""))
+	        {
+	        	ProxyConfig proxyConfig = new ProxyConfig(this.proxyHost, Integer.parseInt(this.proxyPort));
+	        	webClient.getOptions().setProxyConfig(proxyConfig);
+	        	if(!this.proxyUser.equals(""))
+	        	{
+	        		final DefaultCredentialsProvider credentialsProvider = (DefaultCredentialsProvider) webClient.getCredentialsProvider();
+	        		credentialsProvider.addCredentials(this.proxyUser, this.proxyPassword);	        		
+	        	}
+	        }
 	        
 	        final History window = webClient.getWebWindows().get(0).getHistory();
 	        final Field f = window.getClass().getDeclaredField("ignoreNewPages_"); //NoSuchFieldException
 	        f.setAccessible(true);
 	        ((ThreadLocal<Boolean>) f.get(window)).set(Boolean.TRUE);
 	        
+	        try
+	        {
+		        TextPage page = webClient.getPage("https://api.ipify.org/");
+		        if(logger!=null)
+		    		logger.log(Level.INFO, "Light browser started. IP: "+ page.getContent());       
+	        }
+	        catch (Exception e) 
+			{
+	        	if(logger!=null)
+					logger.log(Level.WARNING, "Could not get the current public IP.");
+	        }
 	        /*
 	        String proxyname = "guess.proxy.eu";
 	        int proxyport = 8080;
@@ -693,16 +859,33 @@ public class AntonioliWebSiteScraper {
         }//finally
     }//getPageXml
     
+    /***
+     * Get the list of web pages links that generated the list of antonioli items
+     * @return
+     */
     public List<String> getItemsLinkList()
     {
     	return this.itemsLinks;
     }   
+    
+    /***
+     * Get the list of product webpages skipped sue to an error
+     * @return
+     */
+    public List<String> getSkippedItemsLinks()
+    {
+    	return this.itemsSkippedLinks;
+    } 
     
     public String getWebSiteLink()
     {
     	return this.webSiteLink;
     }
     
+    /***
+     * Get the  list of AntonioliItems objects scraped
+     * @return
+     */
     public List<AntonioliItem> getAllAntonioliItems()
     {
     	return this.antonioliItems;

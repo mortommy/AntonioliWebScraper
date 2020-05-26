@@ -1,8 +1,8 @@
 package com.akabana.AntonioliWebScraper;
 
-import com.akabana.ItemWebScraper.*;
+import com.akabana.Item.*;
 
-public class AntonioliItem extends ItemWebScraper {
+public class AntonioliItem extends Item {
 	
 	protected String itemAvailability;
 	
